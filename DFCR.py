@@ -6,11 +6,11 @@ DFCR (DenseNet for CAPTCHA Recognition) PyTorch实现
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import time
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from PIL import Image
 from pathlib import Path
-from time import time
 import os
 from typing import List, Tuple, Optional,Union
 
@@ -338,46 +338,33 @@ class CaptchaDataset(Dataset):
         while len(indices) < self.num_chars:
             indices.append(0)
         return indices
-
-    def decode_indices(self, indices: List[int]) -> str:
-        """将索引列表解码为字符串（越界索引按0处理）"""
-        out_chars = []
-        for i in indices[:self.num_chars]:
-            i_int = int(i)
-            if 0 <= i_int < len(self.char_set):
-                out_chars.append(self.char_set[i_int])
-            else:
-                out_chars.append(self.char_set[0])
-        return ''.join(out_chars)
-
+    
     @staticmethod
-    def decode_logits_list(
-        logits_list: Union[List[torch.Tensor], torch.Tensor],
-        char_set: str
-    ) -> List[str]:
+    def decode_predictions(predictions: List[torch.Tensor],num_chars: int,char_set: str) -> str:
         """
-        将模型输出（按字符位的 logits 列表）解码为 batch 的字符串列表。
-        期待 logits_list 为长度=num_chars 的列表，每个 tensor 形状 [B, C]。
+        将模型预测转换为文本
+        - predictions: 每个位置的logits，形状为 [C] 或 [1, C]
+        - num_chars: 期望输出的字符数（用于截断/填充）
+        - char_set: 字符表
         """
-        def safe_idx_to_char(idx: int) -> str:
-            return char_set[idx] if 0 <= idx < len(char_set) else char_set[0]
+        n_classes = len(char_set)
+        chars = []
 
-        if isinstance(logits_list, torch.Tensor):
-            # 有些实现会直接返回 [B, C]，视作单字符
-            preds = logits_list.argmax(dim=1).tolist()  # [B]
-            return [''.join(safe_idx_to_char(p) for p in preds)]
+        # 逐位置取最大概率的类别
+        for pred in predictions[:num_chars]:
+            if pred.dim() == 2 and pred.size(0) == 1:
+                pred = pred.squeeze(0)
+            idx = int(pred.argmax(dim=-1).item())
+            chars.append(char_set[idx] if 0 <= idx < n_classes else '?')
 
-        # 标准：list[ num_chars * (B, C) ]
-        batch_size = logits_list[0].shape[0]
-        num_chars = len(logits_list)
-        # [num_chars, B]
-        idx_stacked = torch.stack([lg.argmax(dim=1) for lg in logits_list], dim=0)  # long
-        # 转为 [B, num_chars]
-        idx_transposed = idx_stacked.permute(1, 0).tolist()
-        decoded = []
-        for b in range(batch_size):
-            decoded.append(''.join(safe_idx_to_char(i) for i in idx_transposed[b][:num_chars]))
-        return decoded
+        # 若预测位置少于 num_chars，用第一个字符(或'?' )补齐；若多于则截断
+        if len(chars) < num_chars:
+            pad_char = chars[0] if chars else '?'
+            chars += [pad_char] * (num_chars - len(chars))
+        elif len(chars) > num_chars:
+            chars = chars[:num_chars]
+
+        return ''.join(chars)
 
 
     # DataLoader 的 collate 函数

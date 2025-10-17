@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import os
 from torch.utils.data import DataLoader, random_split
 from torch.optim.lr_scheduler import StepLR
 from PIL import Image
@@ -97,7 +98,7 @@ def setup_training(
 def main():
     """主函数"""
     config = {
-        'data_folder': './data/captcha_images',
+        'data_folder': './data/train',
         'char_set': '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz',
         'num_chars': 4,
         'num_classes_per_char': 62,
@@ -134,16 +135,15 @@ def main():
         scheduler=scheduler
     )
 
-def inference_example(
+def predict_api(
     model_path: str,
     image_path: str,
     char_set: str,
     num_chars: int
 ) -> str:
     """
-    推理示例：
-    - 与训练保持一致的 char_set / num_chars
-    - 直接复用 CaptchaDataset.decode_logits_list 进行解码
+    预测函数接口,读入单张图片并输出预测结果
+    适用于已经训练好的模型
     """
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -177,15 +177,15 @@ def inference_example(
         outputs = model(image_tensor)
 
     # 解码
-    texts = CaptchaDataset.decode_logits_list(outputs, dummy_ds.idx_to_char)
-    predicted_text = texts[0] if texts else ""
+    texts = CaptchaDataset.decode_predictions(outputs,num_chars,char_set)
+    predicted_text = texts if texts else ""
     print(f"预测结果: {predicted_text}")
     return predicted_text
 
 
 if __name__ == "__main__":
     print("""
-    DFCR训练脚本（重构版）
+    DFCR训练脚本
     
     使用方法:
     1. 准备数据: 将 CAPTCHA 图片放在文件夹中，文件名作为标签（例如: ABC12.jpg）
@@ -193,12 +193,17 @@ if __name__ == "__main__":
     3. 运行: python main.py
     
     推理使用:
-    predicted_text = inference_example(
+    predicted_text = predict_api(
         model_path='./checkpoints/best_model.pth',
-        image_path='test_image.jpg',
+        image_path='test_image.jpeg',
         char_set='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz',
         num_chars=4
     )
     """)
     
-    main()
+    predict_api(
+        model_path='./checkpoints/best_model.pth',
+        image_path='test_image.jpeg',
+        char_set='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz',
+        num_chars=4
+    )
