@@ -297,6 +297,16 @@ class CaptchaDataset(Dataset):
     - 验证码数据集（文件夹格式）
     - 训练/验证/推理都调用这里的工具方法
     """
+    # 静态预处理变换
+    staic_transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize(
+            mean=[0.882, 0.882, 0.882],
+            std=[0.146, 0.146, 0.146]
+        ),
+        transforms.Resize((224, 224))
+    ])
+    
     def __init__(
         self,
         image_folder: str,
@@ -318,15 +328,9 @@ class CaptchaDataset(Dataset):
                 self.labels.append(label)
 
         # 预处理
-        self.transform = transform or transforms.Compose([
-            transforms.Resize((224, 224)),
-            transforms.ToTensor(),
-            transforms.Normalize(
-                mean=[0.485, 0.456, 0.406],
-                std=[0.229, 0.224, 0.225]
-            )
-        ])
+        self.transform = transform or CaptchaDataset.staic_transform
 
+    
 
     # 编码/解码
     def encode_label(self, label_text: str) -> List[int]:
@@ -613,3 +617,172 @@ class DFCRTrainer:
         print(f'训练完成！')
         print(f'最佳验证准确率: {self.best_val_acc:.4f}')
         print(f'{"="*60}\n')
+
+# ============================================================================
+# 第五部分：特征可视化模块（基于Torch FX）
+# ============================================================================
+
+import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use('Agg')
+import numpy as np
+from torchvision.models.feature_extraction import create_feature_extractor
+
+class Features_plt:
+    """
+    features可视化工具类（基于Torch FX）
+    需要可视化的层 = ['dense_block1','dense_block2','dense_block3','dense_block4','global_avg_pool']
+    输出结果保存在./features_vis目录下
+    """
+    
+    def __init__(
+        self,
+        model: nn.Module,
+        device: torch.device,
+        output_dir: str = './features_vis',
+        layers_to_visualize: List[str] = None
+    ):
+        self.model = model.eval()
+        self.device = device
+        self.output_dir = Path(output_dir)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        
+        if layers_to_visualize is None:
+            self.layers_to_visualize = [
+                'dense_block1', 'dense_block2', 
+                'dense_block3', 'dense_block4', 
+                'global_avg_pool'
+            ]
+        else:
+            self.layers_to_visualize = layers_to_visualize
+        
+        print(f"特征可视化工具初始化完成")
+        print(f"输出目录: {self.output_dir}")
+        print(f"可视化层: {self.layers_to_visualize}")
+    
+    def _extract_features(self, image_tensor: torch.Tensor) -> dict:
+        """使用FX提取特征图"""
+        feature_extractor = create_feature_extractor(
+            self.model, 
+            return_nodes=self.layers_to_visualize
+        )
+        with torch.no_grad():
+            return feature_extractor(image_tensor)
+    
+    def _visualize_conv(self, feature_map: torch.Tensor, layer_name: str, 
+                        image_name: str, max_channels: int = 64):
+        """可视化卷积层特征图"""
+        if feature_map.dim() == 4:
+            feature_map = feature_map[0]
+        
+        num_channels = feature_map.shape[0]
+        channels_to_show = min(num_channels, max_channels)
+        
+        grid_cols = 8
+        grid_rows = (channels_to_show + grid_cols - 1) // grid_cols
+        
+        fig, axes = plt.subplots(grid_rows, grid_cols, 
+                                figsize=(grid_cols * 2, grid_rows * 2))
+        
+        if grid_rows == 1:
+            axes = [axes] if grid_cols == 1 else axes
+        else:
+            axes = axes.flatten()
+        
+        fig.suptitle(f'{layer_name} - {image_name} (通道数: {num_channels})', 
+                     fontsize=14, y=0.995)
+        
+        for idx in range(channels_to_show):
+            channel_data = feature_map[idx].cpu().numpy()
+            vmin, vmax = channel_data.min(), channel_data.max()
+            if vmax > vmin:
+                channel_data = (channel_data - vmin) / (vmax - vmin)
+            
+            im = axes[idx].imshow(channel_data, cmap='viridis', aspect='auto')
+            axes[idx].set_title(f'Ch{idx}', fontsize=8)
+            axes[idx].axis('off')
+            plt.colorbar(im, ax=axes[idx], fraction=0.046, pad=0.04)
+        
+        for idx in range(channels_to_show, len(axes)):
+            axes[idx].axis('off')
+        
+        plt.tight_layout()
+        save_path = self.output_dir / f'{image_name}_{layer_name}.png'
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        plt.close(fig)
+        
+        print(f"  已保存: {save_path}")
+    
+    def _visualize_pool(self, feature_vector: torch.Tensor, layer_name: str, 
+                        image_name: str, top_k: int = 64):
+        """可视化池化层特征"""
+        if feature_vector.dim() == 4:
+            feature_vector = feature_vector[0, :, 0, 0]
+        elif feature_vector.dim() == 2:
+            feature_vector = feature_vector[0]
+        
+        feature_array = feature_vector.cpu().numpy()
+        num_channels = len(feature_array)
+        
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 6))
+        
+        grid_cols = 32
+        grid_rows = (num_channels + grid_cols - 1) // grid_cols
+        padded_array = np.zeros(grid_rows * grid_cols)
+        padded_array[:num_channels] = feature_array
+        heatmap_data = padded_array.reshape(grid_rows, grid_cols)
+        
+        im1 = ax1.imshow(heatmap_data, cmap='viridis', aspect='auto')
+        ax1.set_title(f'全部 {num_channels} 个通道激活热图', fontsize=14)
+        ax1.set_xlabel('列', fontsize=12)
+        ax1.set_ylabel('行', fontsize=12)
+        plt.colorbar(im1, ax=ax1, fraction=0.046, pad=0.04)
+        
+        top_indices = np.argsort(np.abs(feature_array))[-top_k:][::-1]
+        top_values = feature_array[top_indices]
+        colors = plt.cm.viridis((top_values - top_values.min()) / 
+                                (top_values.max() - top_values.min() + 1e-8))
+        
+        ax2.bar(range(top_k), top_values, color=colors, edgecolor='black', linewidth=0.5)
+        ax2.set_title(f'Top-{top_k} 激活最强通道', fontsize=14)
+        ax2.set_xlabel('排名', fontsize=12)
+        ax2.set_ylabel('激活值', fontsize=12)
+        ax2.grid(axis='y', alpha=0.3)
+        
+        for i, idx in enumerate(top_indices[:20]):
+            ax2.text(i, top_values[i], f'{idx}', 
+                    ha='center', va='bottom', fontsize=7, rotation=0)
+        
+        fig.suptitle(f'{layer_name} - {image_name}', fontsize=16, y=0.98)
+        plt.tight_layout()
+        
+        save_path = self.output_dir / f'{image_name}_{layer_name}.png'
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        plt.close(fig)
+        
+        print(f"  已保存: {save_path}")
+        print(f"  激活统计: min={feature_array.min():.3f}, "
+              f"max={feature_array.max():.3f}, mean={feature_array.mean():.3f}")
+    
+    def visualize(self, image_path: str, preprocess: transforms.Compose, 
+                  image_name: str = None, max_channels: int = 64):
+        """可视化单张图片的特征图"""
+        if image_name is None:
+            image_name = Path(image_path).stem
+        
+        print(f"\n处理图片: {image_name}")
+        
+        image = Image.open(image_path).convert('RGB')
+        image_tensor = preprocess(image).unsqueeze(0).to(self.device)
+        
+        features = self._extract_features(image_tensor)
+        
+        for layer_name, feature_map in features.items():
+            print(f"  可视化层: {layer_name}, 形状: {feature_map.shape}")
+            
+            if 'pool' in layer_name.lower() or feature_map.dim() == 2:
+                self._visualize_pool(feature_map, layer_name, image_name)
+            else:
+                self._visualize_conv(feature_map, layer_name, image_name, max_channels)
+        
+        print(f"完成: {image_name}\n")
