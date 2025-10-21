@@ -408,7 +408,6 @@ class CaptchaDataset(Dataset):
 # ============================================================================
 # 第四部分：推理示例    
 # ============================================================================
-
 class DFCRTrainer:
     """DFCR训练器"""
 
@@ -421,7 +420,8 @@ class DFCRTrainer:
         criterion: nn.Module,
         device: torch.device,
         save_dir: str = './checkpoints',
-        num_chars: int = 4
+        num_chars: int = 4,
+        scheduler=None  # 添加scheduler参数
     ):
         self.model = model
         self.train_loader = train_loader
@@ -431,6 +431,7 @@ class DFCRTrainer:
         self.device = device
         self.save_dir = Path(save_dir)
         self.save_dir.mkdir(parents=True, exist_ok=True)
+        self.scheduler = scheduler  # 保存scheduler
         
         self.num_chars = num_chars
         self.best_val_acc = 0.0
@@ -488,12 +489,17 @@ class DFCRTrainer:
             loss.backward()
             self.optimizer.step()
             
+            # ✅ 关键修改：OneCycleLR需要在每个batch后step
+            if self.scheduler is not None:
+                self.scheduler.step()
+            
             total_loss += loss.item()
             
             # 打印进度
             if (batch_idx + 1) % 10 == 0:
+                current_lr = self.optimizer.param_groups[0]['lr']
                 print(f'  Batch [{batch_idx+1}/{len(self.train_loader)}], '
-                      f'Loss: {loss.item():.4f}')
+                      f'Loss: {loss.item():.4f}, LR: {current_lr:.6f}')
         
         epoch_time = time.time() - start_time
         avg_loss = total_loss / len(self.train_loader)
@@ -566,6 +572,10 @@ class DFCRTrainer:
             'val_accs': self.val_accs
         }
         
+        # 如果有scheduler，也保存其状态
+        if self.scheduler is not None:
+            checkpoint['scheduler_state_dict'] = self.scheduler.state_dict()
+        
         # 保存最新模型
         checkpoint_path = self.save_dir / f'checkpoint_epoch_{epoch}.pth'
         torch.save(checkpoint, checkpoint_path)
@@ -577,7 +587,7 @@ class DFCRTrainer:
             torch.save(checkpoint, best_path)
             print(f'保存最佳模型: {best_path}')
     
-    def train(self, num_epochs: int, scheduler=None):
+    def train(self, num_epochs: int):  # ✅ 移除scheduler参数
         """完整训练流程"""
         print(f'\n开始训练，共 {num_epochs} 个epochs')
         print(f'训练集大小: {len(self.train_loader.dataset)}')
@@ -599,10 +609,9 @@ class DFCRTrainer:
             self.val_losses.append(val_loss)
             self.val_accs.append(val_acc)
             
-            # 学习率调整
-            if scheduler is not None:
-                scheduler.step()
-                print(f'  当前学习率: {scheduler.get_last_lr()[0]:.6f}')
+            # ✅ 打印当前学习率（从optimizer获取）
+            current_lr = self.optimizer.param_groups[0]['lr']
+            print(f'  当前学习率: {current_lr:.6f}')
             
             # 保存模型
             is_best = val_acc > self.best_val_acc

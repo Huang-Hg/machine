@@ -107,10 +107,9 @@ def fine_tuning(num_chars: int, char_set: str, data_folder: str, pretrained_mode
 
 def visualize_features_example():
     """特征可视化示例"""
-    from DFCR import features_plt
     
     model_path = './checkpoints/best_model.pth'
-    image_path = './data/captch/1.jpeg'
+    image_path = './data/test/1ARY.jpg'     #替换为你的测试图片路径
     char_set = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
     num_chars = 4
     

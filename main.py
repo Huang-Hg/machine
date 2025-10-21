@@ -1,10 +1,8 @@
 import torch
 import torch.nn as nn
-import os
 import numpy as np
 import random
 from torch.utils.data import DataLoader, random_split
-from torch.optim.lr_scheduler import StepLR
 from PIL import Image
 
 from DFCR import DFCR, CaptchaDataset, DFCRTrainer
@@ -84,14 +82,20 @@ def setup_training(
     print(f"可训练参数量: {trainable_params:,}")
 
     # 优化器 & 调度器 & 损失
-    optimizer = torch.optim.SGD(
+    optimizer = torch.optim.AdamW(      # AdamW解耦权重衰减
         model.parameters(),
         lr=0.001,
-        momentum=0.9,
-        nesterov=True,
-        weight_decay=1e-4
+        betas=(0.9, 0.999),
+        weight_decay=0.01               # AdamW的weight_decay可以更大
     )
-    scheduler = StepLR(optimizer, step_size=30, gamma=0.1)
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        optimizer,
+        max_lr=0.005,
+        epochs=100,
+        steps_per_epoch=len(train_loader),
+        pct_start=0.3,
+        anneal_strategy='cos'
+    )
     criterion = nn.CrossEntropyLoss()
 
     return model, train_loader, val_loader, optimizer, scheduler, criterion, device, full_dataset
@@ -171,11 +175,6 @@ def predict_api(
     """
     model,device,preprocess = initialize_model(char_set, num_chars, model_path)
     model.eval()
-
-    # 复用数据集的预处理 & 字符表
-
-    image = Image.open(image_path).convert('RGB')
-    image_tensor = preprocess(image).unsqueeze(0).to(device)
 
     # 读图并推理
     image = Image.open(image_path).convert('RGB')
