@@ -489,7 +489,7 @@ class DFCRTrainer:
             loss.backward()
             self.optimizer.step()
             
-            # ✅ 关键修改：OneCycleLR需要在每个batch后step
+            # 关键修改：OneCycleLR需要在每个batch后step
             if self.scheduler is not None:
                 self.scheduler.step()
             
@@ -587,7 +587,7 @@ class DFCRTrainer:
             torch.save(checkpoint, best_path)
             print(f'保存最佳模型: {best_path}')
     
-    def train(self, num_epochs: int):  # ✅ 移除scheduler参数
+    def train(self, num_epochs: int):  
         """完整训练流程"""
         print(f'\n开始训练，共 {num_epochs} 个epochs')
         print(f'训练集大小: {len(self.train_loader.dataset)}')

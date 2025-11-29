@@ -133,12 +133,12 @@ def main():
         optimizer=optimizer,
         criterion=criterion,
         device=device,
-        save_dir=config['save_dir']
+        save_dir=config['save_dir'],
+        scheduler=scheduler
     )
 
     trainer.train(
-        num_epochs=config['num_epochs'],
-        scheduler=scheduler
+        num_epochs=config['num_epochs']
     )
 
 def initialize_model(char_set: str, num_chars: int,model_path: str):
